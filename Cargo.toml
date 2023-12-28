@@ -9,6 +9,7 @@ edition = "2021"
 tonic = "0.10.2"
 prost = "0.12.3"
 tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["full"] }
 tonic-reflection = "0.10.2"
 futures = "0.3.30"
 arrow-flight = "49.0.0"
