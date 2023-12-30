@@ -1,6 +1,6 @@
 use arrow_flight::error::FlightError;
 use futures::stream::BoxStream;
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use tokio::sync::mpsc;
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
@@ -9,11 +9,13 @@ use tonic::{Request, Response, Status, Streaming};
 
 use arrow::ipc::reader::StreamReader;
 use arrow_flight::encode::FlightDataEncoderBuilder;
+use arrow_flight::decode::{FlightDataDecoder, DecodedPayload};
 use arrow_flight::{
     flight_service_server::FlightService, flight_service_server::FlightServiceServer, Action,
     ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo, HandshakeRequest,
     HandshakeResponse, PutResult, SchemaResult, Ticket,
 };
+use arrow::datatypes::DataType;
 use std::io::BufReader;
 use std::process::{Command, Stdio};
 
@@ -88,8 +90,43 @@ impl FlightService for FlightServiceImpl {
 
     async fn do_exchange(
         &self,
-        _request: Request<Streaming<FlightData>>,
+        request: Request<Streaming<FlightData>>,
     ) -> Result<Response<Self::DoExchangeStream>, Status> {
+        let mut stream = FlightDataDecoder::new(
+            request.into_inner().map_err(FlightError::from)
+            );
+        while let Some(data) = stream.next().await {
+            match data.map(|x| x.payload) {
+                Err(e) => {
+                    println!("error: {:?}", e);
+                    continue;
+                }
+                Ok(DecodedPayload::None) => {
+                    println!("none");
+                }
+                Ok(DecodedPayload::Schema(schema)) => {
+                    println!("schema: {:?}", schema);
+                }
+                Ok(DecodedPayload::RecordBatch(batch)) => {
+                    match batch.schema().field_with_name("program") {
+                        Err(_) => {
+                            println!("no program field");
+                            continue;
+                        }
+                        Ok(field) => {
+                            if field.data_type() != &DataType::Binary {
+                                println!("program field is not binary");
+                                continue;
+                            }
+                        }
+                    }
+                    if let Some(column) = batch.column_by_name("program") {
+                        let array = column.as_any().downcast_ref::<arrow::array::BinaryArray>().unwrap();
+                        println!("len: {:?}", array.value(0).len());
+                    }
+                }
+            }
+        }
         let (tx, rx) = mpsc::channel(1);
         task::spawn_blocking(move || -> Result<(), Status> {
             let mut child = Command::new("target/debug/arrow_stdout")
@@ -100,12 +137,12 @@ impl FlightService for FlightServiceImpl {
             let mut reader = StreamReader::try_new(BufReader::new(stdout), None)
                 .expect("Failed to create StreamReader");
             while let Some(batch) = reader.next() {
+                println!("batch from process: {:?}", batch);
                 let batch = batch.map_err(|e| FlightError::Arrow(e));
                 tx.blocking_send(batch).expect("send error");
             }
             Ok(())
         });
-
         let stream = FlightDataEncoderBuilder::new()
             .build(ReceiverStream::new(rx))
             .map_err(Status::from);

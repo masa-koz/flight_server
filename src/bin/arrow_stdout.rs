@@ -1,4 +1,4 @@
-use arrow::array::Int32Array;
+use arrow::array::{Int32Array, Int64Array};
 use arrow::datatypes::{Schema, Field, DataType};
 use arrow::record_batch::RecordBatch;
 use arrow::ipc::writer::StreamWriter;
@@ -9,7 +9,7 @@ fn write_to_stdout() -> arrow::error::Result<()> {
     let array = Int32Array::from(vec![1, 2, 3, 4, 5]);
 
     // 配列からフィールドを作成します。
-    let field = Field::new("field_name", DataType::Int32, false);
+    let field = Field::new("field_name", DataType::Int32, true);
     
     // フィールドからスキーマを作成します。
     let schema = Schema::new(vec![field]);
